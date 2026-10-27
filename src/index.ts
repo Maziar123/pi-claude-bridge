@@ -137,7 +137,26 @@ const SDK_TO_PI_TOOL_NAME: Record<string, string> = {
 };
 
 // MODELS is buildModels(getModels("anthropic")) — projection kept in models.js.
-const MODELS = buildModels(getModels("anthropic"));
+// Local patch (prpforge, first 2026-10-14; branch local/extra-models): this machine's Claude Code
+// endpoint serves proxied models (GLM-5.3-Flash, glm-5.3-flashx, GLM-5.3) instead of claude-* ids,
+// which all 400 at the endpoint. Expose the proxied ids so bridge turns can target them; override
+// the list via CLAUDE_BRIDGE_EXTRA_MODELS (comma-separated ids).
+const EXTRA_MODEL_IDS = (process.env.CLAUDE_BRIDGE_EXTRA_MODELS ?? "GLM-5.3-Flash,glm-5.3-flashx,GLM-5.3")
+	.split(",")
+	.map((s) => s.trim())
+	.filter((s) => s.length > 0);
+const MODELS = [
+	...buildModels(getModels("anthropic")),
+	...EXTRA_MODEL_IDS.map((id) => ({
+		id,
+		name: id,
+		reasoning: false,
+		input: ["text" as const],
+		contextWindow: 200000,
+		maxTokens: 32000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	})),
+];
 let providerSettings: NonNullable<Config["provider"]> = {};
 let longContextSettings: LongContextSettings = { plan: "pro", longContextExtraUsage: false };
 
