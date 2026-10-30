@@ -78,13 +78,26 @@ const PARENT_SESSION_VARS = [
 	"CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
 ];
 
+// The bridge reads and writes Claude Code's session files through pi's own values of
+// these, so a child pointed elsewhere would resume a session the bridge never wrote.
+const SESSION_STORAGE_VARS = ["CLAUDE_CONFIG_DIR", "HOME", "USERPROFILE"];
+
 // Environment for every Claude Code subprocess. Config (ANTHROPIC_*, CLAUDE_CONFIG_DIR,
 // CLAUDE_CODE_USE_BEDROCK, ...) always passes through; parent-session markers are
-// dropped only when CLAUDECODE says pi was started from inside Claude Code.
-function ccChildEnv(parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...parent, ...CC_CHILD_ENV };
+// dropped only when CLAUDECODE says pi was started from inside Claude Code. `overrides`
+// is pi's per-request provider env (a stored credential's `env`, or the caller's), which
+// takes precedence over process.env; an empty value removes the variable, since pi's
+// auth.json only allows strings. CC_CHILD_ENV goes last so its guards always hold.
+function ccChildEnv(overrides: Record<string, string> = {}, parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	const storage = Object.keys(overrides).filter((name) => SESSION_STORAGE_VARS.includes(name.toUpperCase()));
+	if (storage.length) throw new Error(`claude-bridge: provider env can't set ${storage.join(", ")}; the bridge reads Claude Code's session files through pi's own values`);
+	const env: NodeJS.ProcessEnv = { ...parent };
 	if (parent.CLAUDECODE) for (const name of PARENT_SESSION_VARS) delete env[name];
-	return env;
+	for (const [name, value] of Object.entries(overrides)) {
+		if (value === "") delete env[name];
+		else env[name] = value;
+	}
+	return { ...env, ...CC_CHILD_ENV };
 }
 
 // Pi owns context files on the provider path, so Claude Code must not load its
@@ -553,7 +566,7 @@ async function runIsolatedSummary(
 			prompt: promptText,
 			options: {
 				cwd,
-				env: traceQueryStart(traceQueryId, { kind: "isolated-summary", callId: traceCallId, model: cliModel }, ccChildEnv()),
+				env: traceQueryStart(traceQueryId, { kind: "isolated-summary", callId: traceCallId, model: cliModel }, ccChildEnv(options?.env)),
 				settings: { autoMemoryEnabled: false },
 				tools: [],
 				strictMcpConfig: true,
@@ -2119,7 +2132,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			kind: "provider", callId: traceCallId, piSessionId, reentrant: isReentrant, resume: resumeSessionId ?? null,
 			model: cliModel, effort: effort ?? null, servedToolNames: Object.fromEntries(customToolNameToSdk), mcpTools: mcpTools.map((t) => t.name),
 			signal: traceSignalId(options?.signal), digests: { systemPromptAppend },
-		}, ccChildEnv());
+		}, ccChildEnv(options?.env));
 		const cliDebug = makeCliDebugOptions("provider");
 		const childProcess = new QueryProcess(cliDebug.stderr);
 		const queryOptions: NonNullable<Parameters<typeof query>[0]["options"]> = {

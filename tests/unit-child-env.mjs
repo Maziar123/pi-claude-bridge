@@ -39,14 +39,45 @@ describe("Claude Code child environment", () => {
 			CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli", CLAUDE_CODE_SESSION_ID: "parent", CLAUDE_CODE_CHILD_SESSION: "1",
 			CLAUDE_ENV_FILE: "/parent/env.sh", CLAUDE_AGENT_SDK_VERSION: "0.0.1", CLAUDE_CODE_SSE_PORT: "1234", TRACEPARENT: "00-parent",
 		};
-		const env = __test.ccChildEnv(parent);
+		const env = __test.ccChildEnv(undefined, parent);
 		assert.deepEqual(env, { ...config, ...__test.CC_CHILD_ENV });
 		assert.equal(parent.CLAUDECODE, "1", "pi's own environment is not modified");
 	});
 
 	it("passes everything through when pi wasn't started from Claude Code", () => {
 		const parent = { ...config, CLAUDE_CODE_ENTRYPOINT: "claude-vscode", TRACEPARENT: "00-user" };
-		assert.deepEqual(__test.ccChildEnv(parent), { ...parent, ...__test.CC_CHILD_ENV });
+		assert.deepEqual(__test.ccChildEnv(undefined, parent), { ...parent, ...__test.CC_CHILD_ENV });
+	});
+
+	it("applies pi's provider env over pi's own, an empty value unsetting, without dropping the bridge's guards", () => {
+		const env = __test.ccChildEnv({ HTTPS_PROXY: "http://proxy", ANTHROPIC_API_KEY: "", DISABLE_AUTO_COMPACT: "0" }, config);
+		const { ANTHROPIC_API_KEY: _unset, ...kept } = config;
+		assert.deepEqual(env, { ...kept, HTTPS_PROXY: "http://proxy", ...__test.CC_CHILD_ENV });
+	});
+
+	it("refuses a provider env that would move Claude Code's session files", () => {
+		assert.throws(() => __test.ccChildEnv({ CLAUDE_CONFIG_DIR: "/elsewhere" }, config), /CLAUDE_CONFIG_DIR/);
+		assert.throws(() => __test.ccChildEnv({ home: "/elsewhere" }, config), /home/);
+	});
+
+	it("passes the request's env to the isolated summary query", async () => {
+		const launches = [];
+		__test.setQuery(({ options }) => {
+			launches.push(options);
+			const q = (async function* () { yield { type: "result", subtype: "success", is_error: false, result: "ok" }; })();
+			q.interrupt = async () => {};
+			q.close = () => {};
+			return q;
+		});
+		try {
+			const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "claude-bridge", reasoning: false, input: ["text"], contextWindow: 200_000, maxTokens: 64_000 };
+			const context = { systemPrompt: "Summarize.", messages: [{ role: "user", content: [{ type: "text", text: "go" }], timestamp: 0 }] };
+			const result = await __test.isolatedStreamFn(model, context, { cacheRetention: "none", env: { HTTPS_PROXY: "http://proxy" } }).result();
+			assert.equal(result.stopReason, "stop", result.errorMessage);
+			assert.equal(launches[0].env.HTTPS_PROXY, "http://proxy");
+		} finally {
+			__test.setQuery(null);
+		}
 	});
 
 	// Deliberately not asserted here: that every `query()` call site spreads the
