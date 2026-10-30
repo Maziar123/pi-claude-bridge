@@ -302,6 +302,17 @@ it("a fresh same-session query discards a parked query and retains its progress 
 	assert.equal(__test.getSharedSession("pi").ccSessionId, calls[1].options.resume);
 });
 
+it("session_shutdown closes its own parked query (a terminate:true tool's) and leaves other sessions' alone", { timeout: 5000 }, async () => {
+	scripts.push({ tool: true }, { tool: true, toolId: "OTHER" });
+	await call([user("tool")]).result();
+	await call([user("tool")], undefined, "other").result();
+	const [mine, other] = calls;
+	for (const fn of handlers.session_shutdown) fn({}, { sessionManager: { getSessionId: () => "pi" } });
+	await mine.exited;
+	assert.equal(other.child.killed, false);
+	assert.deepEqual([...__test.activeQueryContexts].map((c) => c.piSessionId), ["other"]);
+});
+
 
 it("a synthetic durable-host continuation is grouped with its next assistant, not fabricated as a pi slot", async () => {
 	const ask = user("tool"), controller = new AbortController();

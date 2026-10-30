@@ -984,26 +984,27 @@ const promptCaptures = sharedPromptCaptures((diagnostic) => {
 	);
 });
 
-/** Whatever a settled session left behind, named in one greppable line. Scoped to
- *  that session: subagents run in the parent's process and shut down while the
- *  parent's query is still live.
+/** Close every query a shutting-down pi session still holds, keeping its progress
+ *  for a later resume. Scoped to that session: subagents run in the parent's
+ *  process and shut down while the parent's query is still live.
  *
- *  Every one of these should be empty once the last turn ends, and each is a leak
- *  that costs something real: a retained context routes a later orphaned tool result
- *  into the delivery path and returns a stream nobody ends; a pending tool call is an
- *  MCP handler Claude Code is still waiting on; a live prompt stream is an unresolved
- *  ack. The activeQueryContexts leak was present on every single happy-path run and
- *  no test noticed, because nothing asserted that anything ends clean — so assert it
- *  where the real sessions are, and let diag/audit-warnings.mjs scan for it. */
-function reportLeaks(label: string, piSessionId: string): void {
-	const contexts = [...activeQueryContexts].filter((c) => c.piSessionId === piSessionId);
-	const pendingCalls = contexts.reduce((n, c) => n + c.pendingToolCalls.size, 0);
-	const liveStreams = contexts.filter((c) => c.promptStream !== null).length;
-	if (contexts.length === 0) return;
-	debug(
-		`WARNING: ${label} left state behind — contexts=${contexts.length} `
-		+ `pendingToolCalls=${pendingCalls} promptStreams=${liveStreams}`,
-	);
+ *  A live query here is expected: a tool that returns `terminate: true` ends pi's
+ *  run with Claude Code still parked on its result, and that child would keep the
+ *  process alive after pi is done (issue #210). A context with no query is a leak
+ *  that costs something real: it routes a later orphaned tool result into the
+ *  delivery path and returns a stream nobody ends. That leak was present on every
+ *  single happy-path run and no test noticed, because nothing asserted that
+ *  anything ends clean — so assert it where the real sessions are, and let
+ *  diag/audit-warnings.mjs scan for it. */
+function closeSessionQueries(piSessionId: string): void {
+	for (const c of [...activeQueryContexts]) {
+		if (c.piSessionId !== piSessionId) continue;
+		debug(
+			`${c.activeQuery ? "session_shutdown: closing parked query" : "WARNING: session_shutdown left a context with no query"} — `
+			+ `pendingToolCalls=${c.pendingToolCalls.size} promptStream=${c.promptStream !== null}`,
+		);
+		discardRewrittenQuery(c);
+	}
 }
 
 function contextForToolResults(results: McpResult[]): QueryContext | undefined {
@@ -2690,7 +2691,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
 		forgetSessionCwd(ctx.sessionManager.getSessionId());
-		reportLeaks("session_shutdown", ctx.sessionManager.getSessionId());
+		closeSessionQueries(ctx.sessionManager.getSessionId());
 		clearSession("session_shutdown");
 	});
 
