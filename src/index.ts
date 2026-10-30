@@ -1399,11 +1399,11 @@ function dropAbandonedStreamBlocks(c: QueryContext, why: string): void {
 //
 // It is also the content path when a stream stalls: Claude Code drops it and asks
 // again without streaming ("Error streaming, falling back to non-streaming mode"),
-// and the answer arrives as one assistant message, under a new message id, with no
-// stream_events of its own. turnSawStreamEvent is already set by the dead stream,
-// so gating on it alone dropped that message: its tool calls never reached pi, CC
-// sat in the MCP handler waiting for their results, and the turn hung on "Working"
-// until the user aborted it.
+// and the answer arrives one assistant message per content block, all under a new
+// message id, with no stream_events of its own. turnSawStreamEvent is already set
+// by the dead stream, so gating on it alone dropped that message: its tool calls
+// never reached pi, CC sat in the MCP handler waiting for their results, and the
+// turn hung on "Working" until the user aborted it.
 function processAssistantMessage(message: SDKMessage, model: Model<any>, customToolNameToPi: Map<string, string>, c: QueryContext): void {
 	const assistantMsg = (message as any).message;
 	if (!assistantMsg?.content) return;
@@ -1427,17 +1427,21 @@ function processAssistantMessage(message: SDKMessage, model: Model<any>, customT
 		if (assistantMsg.usage && c.turnOutput) recordUsage(c.turnOutput, assistantMsg.usage, model);
 		return;
 	}
-	if (c.turnSawStreamEvent) {
+	const id = assistantMsg.id;
+	if (c.turnSawStreamEvent && (!id || id !== c.turnFallbackMessageId)) {
 		// Same id was already delivered; a new id is CC's non-streaming fallback.
 		// Drop the stalled stream's partial blocks if it never stopped. Deliberately
 		// deliver even if it stopped, at the risk of duplication if CC renumbers it.
-		const id = assistantMsg.id;
 		if (!id || !c.turnStreamMessageId || id === c.turnStreamMessageId) return;
 		if (c.turnStreamOpen) dropAbandonedStreamBlocks(c, `non-streaming fallback ${id}`);
+		c.turnFallbackMessageId = id;
 	}
-	c.turnStreamMessageId = assistantMsg.id;
-	if (assistantMsg.id && !c.turnAssistantIds.includes(assistantMsg.id)) c.turnAssistantIds.push(assistantMsg.id);
-	c.turnToolCallIds = [];
+	// Later blocks of the same id continue the message rather than starting it over.
+	if (id !== c.turnStreamMessageId) {
+		c.turnStreamMessageId = id;
+		if (id && !c.turnAssistantIds.includes(id)) c.turnAssistantIds.push(id);
+		c.turnToolCallIds = [];
+	}
 	debug(`processAssistantMessage fallback: ${assistantMsg.content.length} blocks, types=${assistantMsg.content.map((b: any) => b.type).join(",")}`);
 	for (const block of assistantMsg.content) {
 		if (block.type === "text" && block.text) {
