@@ -2,6 +2,7 @@
 
 ## UNRELEASED
 
+- **Fix: a cloned repo could run commands through the bridge** — Claude Code's project and local settings (`.claude/settings.json`, `.claude/settings.local.json`) are no longer loaded, so a repo's hooks, `apiKeyHelper` and `env` don't run; `~/.claude/settings.json` still applies. A project `.pi/claude-bridge.json` can no longer set `provider` options, which include the Claude Code executable path; set them in `~/.pi/agent/claude-bridge.json`.
 - **Fix: bash default timeout broke the prompt cache on rebuild (#203)** — The 120s default now applies when the command runs instead of being saved in pi's history, so rebuilt sessions match Claude Code's. Thanks @cad0p and @superninjv.
 - **Fix: active history edits** — Restart Claude Code from pi's selected history before delivering tool results, even without a rewrite event. Thanks @rochecompaan.
 - **Fix: keep Claude Code history that still matches pi's (#222)** — The bridge now compares message content instead of counting messages, so it catches edits and keeps everything up to the first difference. Rewinds, edits, interruptions and restarts fork or trim the Claude Code session instead of rebuilding it, preserving prompt cache and thinking. Fixes #30, #42, #62, #86, #103, #165, #182, #202; helps #55, #77, #114, #207. Builds on PR #136; thanks @sonSunnoi.

@@ -2063,8 +2063,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		// MCP auto-loading suppression: CC reads MCP servers from ~/.claude.json (top-level
 		// + per-project) and .mcp.json. Since pi executes tools (not CC), those are pure
 		// token overhead. --strict-mcp-config tells the binary to use ONLY mcpServers passed
-		// programmatically and ignore filesystem MCP entries — applied unconditionally because
-		// settingSources is left at CC's default, which loads all sources.
+		// programmatically and ignore filesystem MCP entries.
 		const strictMcpConfigEnabled = providerSettings.strictMcpConfig !== false;
 		const claudeExecutable = providerSettings.pathToClaudeCodeExecutable;
 
@@ -2078,7 +2077,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 
 		// Suppress claude.ai cloud MCP servers (Figma/Canva/etc. auto-discovered via OAuth
 		// when the user is logged into Anthropic). These are a separate code path from
-		// filesystem MCP and are NOT blocked by --strict-mcp-config or settingSources=undefined.
+		// filesystem MCP and are NOT blocked by --strict-mcp-config or settingSources.
 		// The native CC binary gates them on env var ENABLE_CLAUDEAI_MCP_SERVERS: setting it
 		// to "0"/"false"/"no"/"off" makes the loader return early before any cloud fetch.
 		// DISABLE_AUTO_COMPACT=1: pi owns context-management and propagates its own
@@ -2099,6 +2098,11 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			tools: [],
 			permissionMode: "bypassPermissions",
 			includePartialMessages: true,
+			// User settings only. A repo's .claude/settings.json and settings.local.json can
+			// carry hooks, apiKeyHelper, env and plugins, and Claude Code trusts the workspace
+			// when it isn't interactive, so they would run with no prompt. ~/.claude/settings.json
+			// still loads: Bedrock/Vertex users keep env and apiKeyHelper there.
+			settingSources: ["user"] as SettingSource[],
 			// includeGitInstructions:false drops the gitStatus block from the preset.
 			// That block is the trailing suffix of the cached system block, and a
 			// git-state transition (new file, staging, commit) rewrites it — busting
@@ -2406,7 +2410,8 @@ async function promptAndWait(
 			// without the tool and permission guidance the bridge relies on everywhere else.
 			// Whether pi has skills to append is unrelated to whether the child needs that.
 			systemPrompt: { type: "preset", preset: "claude_code", append: skillsBlock },
-			settingSources: ["user", "project"] as SettingSource[],
+			// User settings only, as on the provider path.
+			settingSources: ["user"] as SettingSource[],
 			extraArgs,
 			...(resumeSessionId ? { resume: resumeSessionId } : {}),
 			...(sync.forkAt ? { forkSession: true, resumeSessionAt: sync.forkAt } : {}),
