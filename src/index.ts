@@ -945,7 +945,9 @@ const promptCaptures = sharedPromptCaptures((diagnostic) => {
 	);
 });
 
-/** Whatever a settled session left behind, named in one greppable line.
+/** Whatever a settled session left behind, named in one greppable line. Scoped to
+ *  that session: subagents run in the parent's process and shut down while the
+ *  parent's query is still live.
  *
  *  Every one of these should be empty once the last turn ends, and each is a leak
  *  that costs something real: a retained context routes a later orphaned tool result
@@ -954,12 +956,13 @@ const promptCaptures = sharedPromptCaptures((diagnostic) => {
  *  ack. The activeQueryContexts leak was present on every single happy-path run and
  *  no test noticed, because nothing asserted that anything ends clean — so assert it
  *  where the real sessions are, and let diag/audit-warnings.mjs scan for it. */
-function reportLeaks(label: string): void {
-	const pendingCalls = [...activeQueryContexts].reduce((n, c) => n + c.pendingToolCalls.size, 0);
-	const liveStreams = [...activeQueryContexts].filter((c) => c.promptStream !== null).length;
-	if (activeQueryContexts.size === 0 && pendingCalls === 0 && liveStreams === 0) return;
+function reportLeaks(label: string, piSessionId: string): void {
+	const contexts = [...activeQueryContexts].filter((c) => c.piSessionId === piSessionId);
+	const pendingCalls = contexts.reduce((n, c) => n + c.pendingToolCalls.size, 0);
+	const liveStreams = contexts.filter((c) => c.promptStream !== null).length;
+	if (contexts.length === 0) return;
 	debug(
-		`WARNING: ${label} left state behind — contexts=${activeQueryContexts.size} `
+		`WARNING: ${label} left state behind — contexts=${contexts.length} `
 		+ `pendingToolCalls=${pendingCalls} promptStreams=${liveStreams}`,
 	);
 }
@@ -2640,7 +2643,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
 		forgetSessionCwd(ctx.sessionManager.getSessionId());
-		reportLeaks("session_shutdown");
+		reportLeaks("session_shutdown", ctx.sessionManager.getSessionId());
 		clearSession("session_shutdown");
 	});
 
