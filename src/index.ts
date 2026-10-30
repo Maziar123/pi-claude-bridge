@@ -1007,11 +1007,16 @@ function closeSessionQueries(piSessionId: string): void {
 	}
 }
 
-function contextForToolResults(results: McpResult[]): QueryContext | undefined {
+/** The parked query of this pi session that these results answer. Tool-call ids
+ *  repeat across sessions whenever one copies another's history (a fork, a worker
+ *  seeded from its host), so an id alone could deliver one session's turn into
+ *  another's Claude Code query. */
+function contextForToolResults(results: McpResult[], piSessionId: string | null): QueryContext | undefined {
 	for (const result of results) {
 		const id = result.toolCallId;
 		if (!id) continue;
 		for (const queryCtx of activeQueryContexts) {
+			if (queryCtx.piSessionId !== piSessionId) continue;
 			if (queryCtx.pendingToolCalls.has(id) || queryCtx.pendingResults.has(id) || queryCtx.turnToolCallIds.includes(id)) {
 				return queryCtx;
 			}
@@ -1891,7 +1896,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 
 	let activeQuery = activeQueryContexts.size > 0;
 	const allResults = activeQueryContexts.size > 0 ? extractAllToolResults(context) : [];
-	let resultCtx = allResults.length > 0 ? contextForToolResults(allResults) : undefined;
+	let resultCtx = allResults.length > 0 ? contextForToolResults(allResults, options?.sessionId ?? null) : undefined;
 
 	// pi rewrote its history while this query sat parked at a tool boundary, so the
 	// query answers about a conversation that no longer exists. Discard it and let

@@ -168,6 +168,19 @@ it("another session survives a history rewrite", { timeout: 5000 }, async () => 
 	assert.deepEqual(readFileSync(sibling.path), before);
 });
 
+it("another session's copy of a tool result never enters this session's waiting query", { timeout: 5000 }, async () => {
+	const ask = user("read");
+	scripts.push({ tool: true });
+	const tool = await call([ask]).result();
+	const [parked] = __test.activeQueryContexts;
+	scripts.push({});
+	assert.equal((await call([ask, tool, toolResult], undefined, "fork").result()).stopReason, "stop");
+	assert.equal(calls.length, 2, "the fork runs its own query");
+	assert.equal(calls[0].child.killed, false);
+	assert.equal(parked.discarded, false);
+	assert.equal(parked.pendingResults.size, 0);
+});
+
 it("continuation digest failures report provider errors instead of throwing", { timeout: 5000 }, async () => {
 	const ask = user("read");
 	scripts.push({ tool: true });
